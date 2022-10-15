@@ -76,6 +76,7 @@ uniform vec3 camera_origin;
 uniform mat3 camera_matrix;
 uniform float t;
 uniform int render_type;
+uniform int aa_samples;
 uniform vec4 viewport;
 
 out vec4 frag_color;
@@ -178,26 +179,24 @@ vec3 perspective(float fov, vec2 size, vec2 pos) {
   return normalize(vec3(xy, -z));
 }
 
-void main() {
-  const float gamma = 2.2;
-
-  vec2 local_coord = gl_FragCoord.xy - viewport.xy;
+vec3 get_color(vec2 offset) {
+  vec2 local_coord = gl_FragCoord.xy - viewport.xy + offset;
   vec2 resolution = viewport.zw;
   vec3 dir = camera_matrix * perspective(45.0, resolution, local_coord);
 
-  const vec3 fog_color = vec3(0.15);
-
   int steps;
   vec3 hit = march(camera_origin, dir, steps);
-
   vec3 color;
   switch (render_type) {
     case 0: {
       float depth = distance(camera_origin, hit);
       if (depth >= MAXIMUM_TRACE_DISTANCE) {
+        const float gamma = 2.2;
         const vec3 light = pow(vec3(69.0, 72.0, 79.0) / vec3(255.0), vec3(gamma));
         const vec3 dark = pow(vec3(40.0, 42.0, 46.0) / vec3(255.0), vec3(gamma));
         color = vec3(mix(dark, light, (local_coord.x + local_coord.y) / (resolution.x + resolution.y)));
+        color = vec3(0.0, 1.0, 0.0);
+        //color = vec3(1.0);
       } else {
         color = nearest_color(hit);
       }
@@ -221,6 +220,21 @@ void main() {
       break;
     }
   }
+  return color;
+}
+
+void main() {
+  const float gamma = 2.2;
+  vec3 color = vec3(0.0);
+
+  float slice_size = 1.0 / float(aa_samples + 1);
+  for (int yi = -(aa_samples / 2); yi < ((aa_samples + 1) / 2); yi++) {
+    for (int xi = -(aa_samples / 2); xi < ((aa_samples + 1) / 2); xi++) {
+      vec2 offset = slice_size * vec2(float(xi), float(yi));
+      color += get_color(offset);
+    }
+  }
+  color /= float(aa_samples * aa_samples);
 
   frag_color = vec4(pow(color, vec3(1.0 / gamma)), 1.0);
 }

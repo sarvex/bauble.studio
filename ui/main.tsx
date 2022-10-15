@@ -54,7 +54,7 @@ document.addEventListener("DOMContentLoaded", (_) => {
           initialScript={initialScript}
           focusable={false}
           canSave={true}
-          size={{width: 512, height: 512}}
+          size={{width: 1920/2, height: 1080/2}}
         />, document.body);
       }).catch(console.error);
       break;

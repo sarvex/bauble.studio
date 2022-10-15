@@ -50,7 +50,7 @@ export default class Renderer {
   private gl: WebGLRenderingContext;
   private program: WebGLProgram;
   private currentFragmentShader: WebGLShader | null = null;
-  private currentFragmentShaderSource: string | null = null;
+  private _currentFragmentShaderSource: string | null = null;
   private _positionLocation: number | null = null;
   private vertexBuffer: WebGLBuffer;
   private vertexData: Float32Array;
@@ -66,6 +66,10 @@ export default class Renderer {
   private orthogonalXZ: mat3 = mat3.create();
   private orthogonalZY: mat3 = mat3.create();
 
+  get currentFragmentShaderSource() {
+    return this._currentFragmentShaderSource;
+  }
+
   constructor(
     canvas: HTMLCanvasElement,
     private time: Signal.T<number>, // TODO: give this a unique type
@@ -76,6 +80,7 @@ export default class Renderer {
     private quadView: Signal.T<boolean>,
     private quadSplitPoint: Signal.T<{x: number, y: number}>,
     private resolution: Accessor<{width: number, height: number}>,
+    private antialiasingSamples: Signal.T<number>,
   ) {
 
     rotateXY(this.orthogonalXY, 0, 0);
@@ -143,9 +148,11 @@ export default class Renderer {
     const {gl, program} = this;
     const uT = gl.getUniformLocation(program, "t");
     const uRenderType = gl.getUniformLocation(program, "render_type");
+    const uAntialiasingSamples = gl.getUniformLocation(program, "aa_samples");
 
     gl.uniform1f(uT, Signal.get(this.time));
     gl.uniform1i(uRenderType, Signal.get(this.renderType));
+    gl.uniform1i(uAntialiasingSamples, Signal.get(this.antialiasingSamples));
   }
 
   private drawSingleView() {
@@ -227,10 +234,41 @@ export default class Renderer {
     }
   }
 
-  recompileShader(fragmentShaderSource: string) {
-    const { gl, program, currentFragmentShader, currentFragmentShaderSource } = this;
+  drawSegment(i: number, slices: number) {
+    if (!this.currentFragmentShader) {
+      return;
+    }
+    this.setSimpleUniforms();
+    const {gl, program, vertexBuffer, vertexData, positionLocation} = this;
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.STATIC_DRAW);
+    gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(positionLocation);
 
-    if (fragmentShaderSource === currentFragmentShaderSource) {
+    const uCameraMatrix = gl.getUniformLocation(program, "camera_matrix");
+    const uCameraOrigin = gl.getUniformLocation(program, "camera_origin");
+    if (this.cameraDirty) {
+      this.calculateCameraMatrix();
+    }
+    gl.uniform3fv(uCameraOrigin, this.cameraOrigin);
+    gl.uniformMatrix3fv(uCameraMatrix, false, this.cameraMatrix);
+
+    const resolution = this.resolution();
+    const sliceSize = {
+      width: Math.floor(resolution.width / slices),
+      height: Math.floor(resolution.height / slices),
+    };
+    const x = i % slices;
+    const y = Math.floor(i / slices);
+    this.setViewport(0, 0, resolution.width, resolution.height);
+    gl.viewport(sliceSize.width * x, sliceSize.height * y, sliceSize.width, sliceSize.height);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  recompileShader(fragmentShaderSource: string) {
+    const { gl, program, currentFragmentShader, _currentFragmentShaderSource } = this;
+
+    if (fragmentShaderSource === _currentFragmentShaderSource) {
       console.info("skipping shader compilation");
       return;
     }
@@ -251,7 +289,7 @@ export default class Renderer {
       }
       gl.useProgram(program);
       this.currentFragmentShader = fragmentShader;
-      this.currentFragmentShaderSource = fragmentShaderSource;
+      this._currentFragmentShaderSource = fragmentShaderSource;
       const endTime = performance.now();
       console.log(`spent ${endTime - startTime}ms compiling shader`);
     } catch (e) {
